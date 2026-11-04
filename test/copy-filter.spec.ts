@@ -178,11 +178,16 @@ describe('isForeignPrebuildDir', () => {
     // universal slices (no arch) keep every architecture of the platform
     ['darwin-x64', 'darwin', null, false],
     ['linux-x64', 'darwin', null, true],
+    // libc / simulator variants: kept for the target's own platform/arch, dropped otherwise
+    ['linux-x64-musl', 'linux', 'x64', false],
+    ['linux-arm64-musl', 'linux', 'x64', true],
+    ['ios-arm64-simulator', 'darwin', 'arm64', true],
     // names that are not node-gyp-build target directories are kept
     ['README.md', 'win32', 'x64', false],
     ['foo-bar', 'win32', 'x64', false],
     ['linux-x64.tar.gz', 'win32', 'x64', false],
     ['-x64', 'win32', 'x64', false],
+    ['linux-x64-', 'win32', 'x64', false],
   ])('%s for %s-%s is foreign: %s', (name, platform, arch, expected) => {
     expect(isForeignPrebuildDir(name, platform, arch)).toBe(expected);
   });

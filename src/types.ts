@@ -653,7 +653,8 @@ export interface Options {
    * the packaged app (often several MB per module).
    *
    * When `true`, a directory directly inside a module's `prebuilds/` directory is not copied if its
-   * name has that `<platform>-<arch>[+<arch>...]` form and names another platform, or another
+   * name has that `<platform>-<arch>[+<arch>...][-<variant>]` form (for example `linux-x64-musl`) and
+   * names another platform, or another
    * architecture than the one being packaged. For a `universal` macOS build, both slices keep every
    * macOS architecture so that they can be merged. Directories with any other name are copied.
    *

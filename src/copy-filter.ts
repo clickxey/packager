@@ -86,15 +86,17 @@ function generateFilterFunction(
   }
 }
 
-// `process.platform` values; a `prebuilds/` subdirectory whose name does not start with one of these
-// is not a node-gyp-build target directory.
-const NODE_PLATFORMS = new Set([
+// Operating-system names that prebuild directories start with: Node.js `process.platform` values,
+// plus `ios` (used by modules that also target mobile runtimes). A `prebuilds/` subdirectory whose
+// name does not start with one of these is not a prebuild target directory.
+const PREBUILD_PLATFORMS = new Set([
   'aix',
   'android',
   'cygwin',
   'darwin',
   'freebsd',
   'haiku',
+  'ios',
   'linux',
   'netbsd',
   'openbsd',
@@ -107,22 +109,21 @@ const PREBUILD_DIR = /\/node_modules\/(?:@[^/]+\/)?[^/@][^/]*\/prebuilds\/([^/]+
 
 /**
  * Whether `name`, a directory directly inside a module's `prebuilds/` directory, holds prebuilt
- * addons that `node-gyp-build` can never load on the given target. It only ever looks in
- * `prebuilds/<process.platform>-<process.arch>/`, where the arch part may list several
- * architectures joined by `+` (`darwin-x64+arm64`). `arch` is `null` to keep every architecture of
- * the platform. Names of any other shape are kept.
+ * addons that can never be loaded on the given target. Prebuild loaders (`node-gyp-build` for
+ * prebuildify, `require-addon` for sodium-native and others) only ever look in
+ * `prebuilds/<platform>-<arch>[-<variant>]/`, where the arch part may list several architectures
+ * joined by `+` (`darwin-x64+arm64`) and the variant names a libc or simulator flavor
+ * (`linux-x64-musl`, `ios-arm64-simulator`). Variants of the target's own platform and arch are
+ * kept. `arch` is `null` to keep every architecture of the platform. Names of any other shape are
+ * kept.
  */
 export function isForeignPrebuildDir(name: string, platform: string, arch: string | null): boolean {
-  const dash = name.indexOf('-');
-  if (dash <= 0) {
+  const [prebuildPlatform, archList, ...variants] = name.split('-');
+  if (archList === undefined || !PREBUILD_PLATFORMS.has(prebuildPlatform)) {
     return false;
   }
-  const prebuildPlatform = name.slice(0, dash);
-  const prebuildArches = name.slice(dash + 1).split('+');
-  if (
-    !NODE_PLATFORMS.has(prebuildPlatform) ||
-    prebuildArches.some((it) => !/^[a-z0-9]+$/.test(it))
-  ) {
+  const prebuildArches = archList.split('+');
+  if ([...prebuildArches, ...variants].some((it) => !/^[a-z0-9]+$/.test(it))) {
     return false;
   }
   if (prebuildPlatform !== platform) {
