@@ -86,12 +86,72 @@ function generateFilterFunction(
   }
 }
 
+// `process.platform` values; a `prebuilds/` subdirectory whose name does not start with one of these
+// is not a node-gyp-build target directory.
+const NODE_PLATFORMS = new Set([
+  'aix',
+  'android',
+  'cygwin',
+  'darwin',
+  'freebsd',
+  'haiku',
+  'linux',
+  'netbsd',
+  'openbsd',
+  'sunos',
+  'win32',
+]);
+
+// `<node_modules path>/<module>/prebuilds/<name>`, for an unscoped or scoped module.
+const PREBUILD_DIR = /\/node_modules\/(?:@[^/]+\/)?[^/@][^/]*\/prebuilds\/([^/]+)$/;
+
+/**
+ * Whether `name`, a directory directly inside a module's `prebuilds/` directory, holds prebuilt
+ * addons that `node-gyp-build` can never load on the given target. It only ever looks in
+ * `prebuilds/<process.platform>-<process.arch>/`, where the arch part may list several
+ * architectures joined by `+` (`darwin-x64+arm64`). `arch` is `null` to keep every architecture of
+ * the platform. Names of any other shape are kept.
+ */
+export function isForeignPrebuildDir(name: string, platform: string, arch: string | null): boolean {
+  const dash = name.indexOf('-');
+  if (dash <= 0) {
+    return false;
+  }
+  const prebuildPlatform = name.slice(0, dash);
+  const prebuildArches = name.slice(dash + 1).split('+');
+  if (
+    !NODE_PLATFORMS.has(prebuildPlatform) ||
+    prebuildArches.some((it) => !/^[a-z0-9]+$/.test(it))
+  ) {
+    return false;
+  }
+  if (prebuildPlatform !== platform) {
+    return true;
+  }
+  return arch !== null && !prebuildArches.includes(arch);
+}
+
+function foreignPrebuildFilter(
+  opts: ProcessedOptionsWithSinglePlatformArch,
+): ((name: string) => boolean) | null {
+  if (!opts.ignoreForeignPrebuilds) {
+    return null;
+  }
+  // Both slices of a universal build must contain the same files to be merged.
+  const arch = opts.universalSliceBuild ? null : opts.arch === 'armv7l' ? 'arm' : opts.arch;
+  return (name) => {
+    const match = PREBUILD_DIR.exec(name);
+    return match !== null && isForeignPrebuildDir(match[1], opts.platform, arch);
+  };
+}
+
 export function userPathFilter(
   opts: ProcessedOptionsWithSinglePlatformArch,
 ): CopyOptions['filter'] {
   const filterFunc = generateFilterFunction(opts.ignore || []);
   const ignoredOutDirs = generateIgnoredOutDirs(opts);
   const pruner = opts.prune ? new Pruner(opts.dir, Boolean(opts.quiet)) : null;
+  const isForeignPrebuild = foreignPrebuildFilter(opts);
 
   return async function filter(file) {
     const fullPath = path.resolve(file);
@@ -111,6 +171,10 @@ export function userPathFilter(
 
     if (path.sep === '\\') {
       name = normalizePath(name);
+    }
+
+    if (isForeignPrebuild?.(name)) {
+      return false;
     }
 
     if (pruner && name.startsWith('/node_modules/')) {

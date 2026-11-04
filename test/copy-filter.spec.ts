@@ -1,5 +1,6 @@
 import {
   generateIgnoredOutDirs,
+  isForeignPrebuildDir,
   populateIgnoredPaths,
   userPathFilter,
 } from '../src/copy-filter.js';
@@ -158,5 +159,118 @@ describe('generateIgnoredOutDirs', () => {
     } as ProcessedOptionsWithSinglePlatformArch);
     const relativeIgnores = ignores.map((ignore) => path.relative(process.cwd(), ignore));
     expect(relativeIgnores).toMatchSnapshot();
+  });
+});
+
+describe('isForeignPrebuildDir', () => {
+  it.each([
+    // the target's own directory, including fat macOS prebuilds
+    ['linux-x64', 'linux', 'x64', false],
+    ['win32-x64', 'win32', 'x64', false],
+    ['darwin-x64+arm64', 'darwin', 'arm64', false],
+    ['linux-arm', 'linux', 'arm', false],
+    // another architecture of the target platform
+    ['linux-arm64', 'linux', 'x64', true],
+    ['win32-ia32', 'win32', 'x64', true],
+    // another platform
+    ['darwin-x64+arm64', 'linux', 'x64', true],
+    ['android-arm', 'win32', 'x64', true],
+    // universal slices (no arch) keep every architecture of the platform
+    ['darwin-x64', 'darwin', null, false],
+    ['linux-x64', 'darwin', null, true],
+    // names that are not node-gyp-build target directories are kept
+    ['README.md', 'win32', 'x64', false],
+    ['foo-bar', 'win32', 'x64', false],
+    ['linux-x64.tar.gz', 'win32', 'x64', false],
+    ['-x64', 'win32', 'x64', false],
+  ])('%s for %s-%s is foreign: %s', (name, platform, arch, expected) => {
+    expect(isForeignPrebuildDir(name, platform, arch)).toBe(expected);
+  });
+});
+
+describe('ignoreForeignPrebuilds', () => {
+  const PREBUILDS = ['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64', 'win32-x64'];
+  let appDir: string;
+  let tempDir: string;
+
+  beforeEach(async () => {
+    tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'electron-packager-test-'));
+    appDir = path.join(tempDir, 'app');
+    await fs.promises.mkdir(appDir);
+    await fs.promises.writeFile(
+      path.join(appDir, 'package.json'),
+      '{"name":"app","dependencies":{"addon":"1.0.0","@scope/addon":"1.0.0"}}',
+    );
+    for (const moduleName of ['addon', '@scope/addon']) {
+      const moduleDir = path.join(appDir, 'node_modules', moduleName);
+      for (const target of PREBUILDS) {
+        await fs.promises.mkdir(path.join(moduleDir, 'prebuilds', target), { recursive: true });
+        await fs.promises.writeFile(
+          path.join(moduleDir, 'prebuilds', target, 'addon.node'),
+          target,
+        );
+      }
+      await fs.promises.writeFile(path.join(moduleDir, 'prebuilds', 'notes.txt'), '');
+      // only a module's own prebuilds/ directory is what node-gyp-build loads from
+      await fs.promises.mkdir(path.join(moduleDir, 'lib', 'prebuilds', 'win32-x64'), {
+        recursive: true,
+      });
+      await fs.promises.writeFile(
+        path.join(moduleDir, 'lib', 'prebuilds', 'win32-x64', 'data.bin'),
+        '',
+      );
+      await fs.promises.writeFile(path.join(moduleDir, 'package.json'), `{"name":"${moduleName}"}`);
+    }
+  });
+
+  async function copiedPrebuilds(opts: Partial<ProcessedOptionsWithSinglePlatformArch>) {
+    const fullOpts = {
+      name: 'test',
+      dir: appDir,
+      prune: false,
+      ...opts,
+    } as ProcessedOptionsWithSinglePlatformArch;
+    Object.assign(fullOpts, populateIgnoredPaths(fullOpts));
+    const targetDir = path.join(tempDir, 'result');
+    await fs.promises.cp(appDir, targetDir, {
+      dereference: false,
+      filter: userPathFilter(fullOpts),
+      recursive: true,
+    });
+    const result: Record<string, string[]> = {};
+    for (const moduleName of ['addon', '@scope/addon']) {
+      const moduleDir = path.join(targetDir, 'node_modules', moduleName);
+      result[moduleName] = (await fs.promises.readdir(path.join(moduleDir, 'prebuilds'))).sort();
+      expect(fs.existsSync(path.join(moduleDir, 'lib', 'prebuilds', 'win32-x64', 'data.bin'))).toBe(
+        true,
+      );
+    }
+    return result;
+  }
+
+  it('copies every prebuild by default', async () => {
+    const result = await copiedPrebuilds({ platform: 'linux', arch: 'x64' });
+    expect(result['addon']).toEqual([...PREBUILDS, 'notes.txt'].sort());
+    expect(result['@scope/addon']).toEqual([...PREBUILDS, 'notes.txt'].sort());
+  });
+
+  it('copies only the target prebuild when enabled', async () => {
+    const result = await copiedPrebuilds({
+      platform: 'linux',
+      arch: 'x64',
+      ignoreForeignPrebuilds: true,
+    });
+    expect(result['addon']).toEqual(['linux-x64', 'notes.txt']);
+    expect(result['@scope/addon']).toEqual(['linux-x64', 'notes.txt']);
+  });
+
+  it('keeps every macOS architecture in a universal slice', async () => {
+    const result = await copiedPrebuilds({
+      platform: 'darwin',
+      arch: 'arm64',
+      universalSliceBuild: true,
+      ignoreForeignPrebuilds: true,
+    });
+    expect(result['addon']).toEqual(['darwin-arm64', 'darwin-x64', 'notes.txt']);
   });
 });

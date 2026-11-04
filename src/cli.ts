@@ -22,6 +22,7 @@ export function parseArgs(argv: string[]) {
       'all',
       'asar-integrity-digest',
       'deref-symlinks',
+      'ignore-foreign-prebuilds',
       'junk',
       'overwrite',
       'prune',

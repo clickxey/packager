@@ -26,6 +26,14 @@ describe('parseArgs', () => {
     expect(typeof args.appCopyright).toBe('string');
   });
 
+  it('populates opts.ignoreForeignPrebuilds as a boolean', () => {
+    expect(parseArgs([]).ignoreForeignPrebuilds).toBeFalsy();
+    // a boolean flag must not swallow the positional app directory that follows it
+    const args = parseArgs(['--ignore-foreign-prebuilds', 'app-dir']);
+    expect(args.ignoreForeignPrebuilds).toBe(true);
+    expect(args.dir).toBe('app-dir');
+  });
+
   it('populates opts.asar', () => {
     const args = parseArgs(['--asar=true']);
     expect(args.asar).toBe(true);

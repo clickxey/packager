@@ -642,6 +642,27 @@ export interface Options {
    */
   prune?: boolean;
   /**
+   * Leaves out the prebuilt native addons that Node modules ship for other platforms and
+   * architectures.
+   *
+   * Modules built with [prebuildify](https://github.com/prebuild/prebuildify) and loaded with
+   * `node-gyp-build` publish their addon for every supported target in one npm package, under
+   * `prebuilds/<platform>-<arch>/` (for example `prebuilds/darwin-x64+arm64/`,
+   * `prebuilds/linux-arm64/` or `prebuilds/win32-x64/`). At runtime only the directory matching
+   * `process.platform` and `process.arch` is ever loaded, so the others only add to the size of
+   * the packaged app (often several MB per module).
+   *
+   * When `true`, a directory directly inside a module's `prebuilds/` directory is not copied if its
+   * name has that `<platform>-<arch>[+<arch>...]` form and names another platform, or another
+   * architecture than the one being packaged. For a `universal` macOS build, both slices keep every
+   * macOS architecture so that they can be merged. Directories with any other name are copied.
+   *
+   * Defaults to `false`.
+   *
+   * **Note:** `ignoreForeignPrebuilds` will have no effect if the {@link prebuiltAsar} option is set.
+   */
+  ignoreForeignPrebuilds?: boolean;
+  /**
    * If `true`, disables printing informational and warning messages to the console when
    * packaging the application. This does not disable errors.
    *
