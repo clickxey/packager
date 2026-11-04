@@ -86,12 +86,73 @@ function generateFilterFunction(
   }
 }
 
+// Operating-system names that prebuild directories start with: Node.js `process.platform` values,
+// plus `ios` (used by modules that also target mobile runtimes). A `prebuilds/` subdirectory whose
+// name does not start with one of these is not a prebuild target directory.
+const PREBUILD_PLATFORMS = new Set([
+  'aix',
+  'android',
+  'cygwin',
+  'darwin',
+  'freebsd',
+  'haiku',
+  'ios',
+  'linux',
+  'netbsd',
+  'openbsd',
+  'sunos',
+  'win32',
+]);
+
+// `<node_modules path>/<module>/prebuilds/<name>`, for an unscoped or scoped module.
+const PREBUILD_DIR = /\/node_modules\/(?:@[^/]+\/)?[^/@][^/]*\/prebuilds\/([^/]+)$/;
+
+/**
+ * Whether `name`, a directory directly inside a module's `prebuilds/` directory, holds prebuilt
+ * addons that can never be loaded on the given target. Prebuild loaders (`node-gyp-build` for
+ * prebuildify, `require-addon` for sodium-native and others) only ever look in
+ * `prebuilds/<platform>-<arch>[-<variant>]/`, where the arch part may list several architectures
+ * joined by `+` (`darwin-x64+arm64`) and the variant names a libc or simulator flavor
+ * (`linux-x64-musl`, `ios-arm64-simulator`). Variants of the target's own platform and arch are
+ * kept. `arch` is `null` to keep every architecture of the platform. Names of any other shape are
+ * kept.
+ */
+export function isForeignPrebuildDir(name: string, platform: string, arch: string | null): boolean {
+  const [prebuildPlatform, archList, ...variants] = name.split('-');
+  if (archList === undefined || !PREBUILD_PLATFORMS.has(prebuildPlatform)) {
+    return false;
+  }
+  const prebuildArches = archList.split('+');
+  if ([...prebuildArches, ...variants].some((it) => !/^[a-z0-9]+$/.test(it))) {
+    return false;
+  }
+  if (prebuildPlatform !== platform) {
+    return true;
+  }
+  return arch !== null && !prebuildArches.includes(arch);
+}
+
+function foreignPrebuildFilter(
+  opts: ProcessedOptionsWithSinglePlatformArch,
+): ((name: string) => boolean) | null {
+  if (!opts.ignoreForeignPrebuilds) {
+    return null;
+  }
+  // Both slices of a universal build must contain the same files to be merged.
+  const arch = opts.universalSliceBuild ? null : opts.arch === 'armv7l' ? 'arm' : opts.arch;
+  return (name) => {
+    const match = PREBUILD_DIR.exec(name);
+    return match !== null && isForeignPrebuildDir(match[1], opts.platform, arch);
+  };
+}
+
 export function userPathFilter(
   opts: ProcessedOptionsWithSinglePlatformArch,
 ): CopyOptions['filter'] {
   const filterFunc = generateFilterFunction(opts.ignore || []);
   const ignoredOutDirs = generateIgnoredOutDirs(opts);
   const pruner = opts.prune ? new Pruner(opts.dir, Boolean(opts.quiet)) : null;
+  const isForeignPrebuild = foreignPrebuildFilter(opts);
 
   return async function filter(file) {
     const fullPath = path.resolve(file);
@@ -111,6 +172,10 @@ export function userPathFilter(
 
     if (path.sep === '\\') {
       name = normalizePath(name);
+    }
+
+    if (isForeignPrebuild?.(name)) {
+      return false;
     }
 
     if (pruner && name.startsWith('/node_modules/')) {
